@@ -1,6 +1,8 @@
 require 'requirejs/rails/builder'
 require 'requirejs/rails/config'
 
+require 'logger'
+
 require 'fileutils'
 require 'pathname'
 
@@ -8,6 +10,7 @@ require 'sprockets'
 require 'tempfile'
 
 require 'active_support/ordered_options'
+require 'active_support/json'
 
 namespace :requirejs do
 
@@ -47,7 +50,7 @@ namespace :requirejs do
     requirejs.env_paths = requirejs.env.paths.dup
     requirejs.config = Rails.application.config.requirejs
     requirejs.builder = Requirejs::Rails::Builder.new(requirejs.config)
-    requirejs.manifest = {}
+    requirejs.manifest = {'files' => {},'assets' => {}}
   end
 
   task :test_node do
@@ -116,13 +119,29 @@ EOM
     # Copy each built asset, identified by a named module in the
     # build config, to its Sprockets digestified name.
     task :digestify_and_compress => ["requirejs:setup"] do
+      logger       = Logger.new($stderr)
+      logger.level = Logger::INFO
+
       requirejs.config.build_config['modules'].each do |m|
+        # Taken from: https://github.com/sstephenson/sprockets/blob/master/lib/sprockets/manifest.rb#L119
         asset_name = "#{requirejs.config.module_name_for(m)}.js"
-        built_asset_path = requirejs.config.target_dir + asset_name
-        digest_name = asset_name.sub(/\.(\w+)$/) { |ext| "-#{requirejs.builder.digest_for(built_asset_path)}#{ext}" }
-        digest_asset_path = requirejs.config.target_dir + digest_name
-        requirejs.manifest[asset_name] = digest_name
-        FileUtils.cp built_asset_path, digest_asset_path
+        if asset = requirejs.env.find_asset(asset_name)
+          built_asset_path = requirejs.config.target_dir + asset_name
+          digest = requirejs.builder.digest_for(built_asset_path)
+          digest_name = asset_name.sub(/\.(\w+)$/) { |ext| "-#{digest}#{ext}" }
+          digest_asset_path = requirejs.config.target_dir + digest_name
+
+          logger.info "Writing #{digest_asset_path}"
+          FileUtils.cp built_asset_path, digest_asset_path
+
+          requirejs.manifest['files'][digest_name] = {
+            'logical_path' => asset.logical_path,
+            'mtime'        => asset.mtime.iso8601,
+            'size'         => asset.bytesize,
+            'digest'       => digest
+          }
+          requirejs.manifest['assets'][asset.logical_path] = digest_name
+        end
 
         # Create the compressed versions
         File.open("#{built_asset_path}.gz",'wb') do |f|
@@ -132,8 +151,8 @@ EOM
         end
         FileUtils.cp "#{built_asset_path}.gz", "#{digest_asset_path}.gz"
 
-        requirejs.config.manifest_path.open('wb') do |f|
-          YAML.dump(requirejs.manifest,f)
+        requirejs.config.manifest_path.open('w') do |f|
+          f.write ActiveSupport::JSON.encode(requirejs.manifest)
         end
       end
     end

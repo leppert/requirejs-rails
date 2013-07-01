@@ -1,6 +1,7 @@
 require 'requirejs/rails/config'
 
 require 'pathname'
+require 'securerandom'
 
 module Requirejs
   module Rails
@@ -22,7 +23,7 @@ module Requirejs
         config.assets.precompile += config.requirejs.precompile
 
         manifest_directory = config.assets.manifest || File.join(::Rails.public_path, config.assets.prefix)
-        manifest_path      = File.join(manifest_directory, "rjs_manifest.yml")
+        manifest_path      = File.join(manifest_directory, "rjs-manifest-#{SecureRandom.hex(16)}.json")
         config.requirejs.manifest_path = Pathname.new(manifest_path)
       end
 
